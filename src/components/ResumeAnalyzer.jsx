@@ -1,5 +1,47 @@
-import React, { useState } from "react";
+import React, { useState, useEffect } from "react";
 import { FileText, Upload, Loader, Download, FileUp, Copy } from "lucide-react";
+
+// Load PDF.js worker
+let pdfjsLib = null;
+
+const loadPdfLib = async () => {
+  if (pdfjsLib) return pdfjsLib;
+  
+  const script = document.createElement('script');
+  script.src = 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js';
+  script.async = true;
+  
+  return new Promise((resolve) => {
+    script.onload = () => {
+      pdfjsLib = window.pdfjsLib;
+      pdfjsLib.GlobalWorkerOptions.workerSrc = 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js';
+      resolve(pdfjsLib);
+    };
+    document.head.appendChild(script);
+  });
+};
+
+const extractTextFromPdf = async (arrayBuffer) => {
+  try {
+    const pdfLib = await loadPdfLib();
+    const pdf = await pdfLib.getDocument({ data: arrayBuffer }).promise;
+    let extractedText = '';
+    
+    for (let i = 1; i <= pdf.numPages; i++) {
+      const page = await pdf.getPage(i);
+      const textContent = await page.getTextContent();
+      const pageText = textContent.items
+        .map(item => item.str)
+        .join(' ');
+      extractedText += pageText + '\n';
+    }
+    
+    return extractedText.trim();
+  } catch (error) {
+    console.error('PDF extraction error:', error);
+    throw new Error('Failed to extract text from PDF: ' + error.message);
+  }
+};
 
 const extractJSON = (text) => {
   const match = text.match(/\{[\s\S]*\}/);
@@ -33,27 +75,20 @@ export default function ResumeAnalyzer({ aiReady }) {
         const content = event.target?.result;
 
         if (file.type === "application/pdf") {
-          // For PDF files - use Puter AI to process the file
+          // For PDF files - extract text using PDF.js
           try {
-            // Create a blob and try to extract text using a simpler method
-            // Since pdf.js can be complex, we'll ask user to upload as image or text instead
-            const message = `PDF Upload Tip: For better reliability, please try one of these options:
-1. Convert your PDF to an image (PNG/JPG) and upload that
-2. Copy-paste the text from your PDF directly
-3. Upload as a text file (.txt)
-
-PDF support requires additional setup. Would you like to upload the file differently?`;
+            setResumeText("📄 Extracting text from PDF...");
+            const extractedText = await extractTextFromPdf(content);
             
-            setResumeText(message);
+            if (extractedText && extractedText.trim()) {
+              setResumeText(extractedText);
+            } else {
+              setResumeText("❌ No text found in PDF. Please try:\n• Use a text-based PDF (not scanned image)\n• Paste text directly instead\n• Upload a .txt file");
+            }
             setLoading(false);
           } catch (err) {
             console.error("PDF Error:", err);
-            setResumeText(`Error reading PDF: ${err.message}
-
-Please try:
-• Upload your PDF as an image instead (screenshot/photo)
-• Copy-paste the resume text directly
-• Save as text file and upload`);
+            setResumeText(`❌ Error reading PDF: ${err.message}\n\nPlease try:\n• Use a different PDF\n• Paste text directly\n• Upload a .txt or image file`);
             setLoading(false);
           }
         } else if (file.type.startsWith("image/")) {

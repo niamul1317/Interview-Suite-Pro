@@ -10,6 +10,48 @@ import {
   CheckCircle,
 } from "lucide-react";
 
+// Load PDF.js worker
+let pdfjsLib = null;
+
+const loadPdfLib = async () => {
+  if (pdfjsLib) return pdfjsLib;
+  
+  const script = document.createElement('script');
+  script.src = 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js';
+  script.async = true;
+  
+  return new Promise((resolve) => {
+    script.onload = () => {
+      pdfjsLib = window.pdfjsLib;
+      pdfjsLib.GlobalWorkerOptions.workerSrc = 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js';
+      resolve(pdfjsLib);
+    };
+    document.head.appendChild(script);
+  });
+};
+
+const extractTextFromPdf = async (arrayBuffer) => {
+  try {
+    const pdfLib = await loadPdfLib();
+    const pdf = await pdfLib.getDocument({ data: arrayBuffer }).promise;
+    let extractedText = '';
+    
+    for (let i = 1; i <= pdf.numPages; i++) {
+      const page = await pdf.getPage(i);
+      const textContent = await page.getTextContent();
+      const pageText = textContent.items
+        .map(item => item.str)
+        .join(' ');
+      extractedText += pageText + '\n';
+    }
+    
+    return extractedText.trim();
+  } catch (error) {
+    console.error('PDF extraction error:', error);
+    throw new Error('Failed to extract text from PDF: ' + error.message);
+  }
+};
+
 const extractJSON = (text) => {
   const match = text.match(/\{[\s\S]*\}/);
   if (!match) return null;
@@ -55,25 +97,23 @@ export default function ResumeRanker({ aiReady }) {
           const content = event.target?.result;
 
           try {
-            let text = "";
-
             if (file.type === "application/pdf") {
               try {
-                // PDF support requires additional setup
-                const message = `PDF Upload: For better reliability, please upload as:
-• Image file (PNG/JPG) - takes screenshot of PDF
-• Text file (.txt) - copy-paste content from PDF
-
-This avoids complex PDF parsing.`;
-                addResume(file.name, message);
+                const extractedText = await extractTextFromPdf(content);
+                
+                if (extractedText && extractedText.trim()) {
+                  addResume(file.name, extractedText);
+                } else {
+                  addResume(file.name, "❌ No text found in PDF. Please try:\n• Use a text-based PDF (not scanned image)\n• Upload a .txt file instead");
+                }
               } catch (err) {
                 console.error("PDF Error:", err);
-                addResume(file.name, "Please upload PDF as image or text file instead");
+                addResume(file.name, `❌ Error reading PDF: ${err.message}\n\nPlease try:\n• Use a different PDF\n• Upload a .txt file`);
               }
             } else {
               // Other file types (text, etc)
               try {
-                text = new TextDecoder().decode(new Uint8Array(content));
+                const text = new TextDecoder().decode(new Uint8Array(content));
                 addResume(file.name, text);
               } catch (err) {
                 addResume(file.name, "Error reading file: " + err.message);
